@@ -1,0 +1,111 @@
+---
+title: "Contact Gap Analysis"
+author: "Jesse Cahill"
+date: "September 18, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(haven)
+library(lubridate)
+```
+
+# Read and Tidy Address Data
+
+```{r warning=FALSE, message=FALSE}
+add <- read_csv(str_c("C:\\Users\\jc4673\\Documents\\Columbia\\CHS_Lexis\\distance_measures\\",
+"chs_lexisnexis_distance_measures_2\\chs_addresses_geocode__chs_addresses_geocode.csv"), 
+                col_types = cols_only(ssn_altkey = "c",
+                                     yrdeath = "i",
+                                     dxid1 = "i",
+                                     dxid2 = "i",
+                                     chs_entrydate1 = col_date(),
+                                     chs_entrydate2 = col_date()
+                                     ))
+#add
+
+
+# Separate table for year of death
+yrdeath <- add %>%
+    select(ssn_altkey, yrdeath) %>%
+    distinct()
+
+# Separate tables for id1 & id2, to be joined later on
+id1 <- add %>%
+    select(ssn_altkey, dxid1, chs_entrydate1) %>%
+    distinct() %>%
+    rename(id = dxid1, chs_entrydate = chs_entrydate1)
+
+id2 <- add %>%
+    select(ssn_altkey, dxid2, chs_entrydate2) %>%
+    distinct() %>%
+    rename(id = dxid2, chs_entrydate = chs_entrydate2)
+
+# Tidy version of address start dates
+tidy_entry <- bind_rows(id1, id2) %>%
+    distinct() %>%
+    select(-id) %>%
+    group_by(ssn_altkey) %>%
+    mutate(id = row_number()) %>%
+    arrange(ssn_altkey, id) %>%
+    select(ssn_altkey, id, chs_entrydate)
+
+#tidy_entry
+```
+
+# Contact Date Data
+
+```{r}
+contact_date <- read_dta("C:\\Users\\jc4673\\Documents\\Data\\CHS\\contactsbyalt_keywdates.dta") %>%
+    group_by(ssn_altkey) %>%
+    mutate(next_date = lead(contactdate),
+          gap = next_date - contactdate) %>%
+    ungroup %>% 
+    na.omit #%>%
+    #mutate(gap_interval = interval(contactdate, next_date))
+
+#contact_date
+
+#interval(contact_date$contactdate, contact_date$next_date)
+```
+ 
+```{r}
+g <- ggplot(contact_date, mapping = aes(x = gap))
+ g + geom_histogram(bins = 100)
+ g + geom_density(color = "Blue")
+```
+
+## Conclusions (Gap Distributions):
+The data is bi-modal, with a large peak appearing at 6 months and a much smaller one appearing at 1 year. Of **`r nrow(contact_date)`** contacts, **`r nrow(filter(contact_date, gap > days(365)))`** have intervals longer than one year.
+
+# Address Change After Gap?
+
+First, we subset the data to only gaps greater than 1 year.
+
+```{r}
+
+g_1yr <-contact_date %>% 
+  #select(-gap_interval) %>% 
+  filter(gap > 365) %>%
+  select(ssn_altkey, contactdate, everything()) %>% 
+  arrange(ssn_altkey, contactdate) 
+```  
+
+Now, we join the gap data with the chs new address data, and filter for when a new address appears within a gap. 
+
+```{r}
+joined <- inner_join(g_1yr, tidy_entry) %>% 
+  mutate(gap_interval = interval(contactdate, next_date))
+joined_filter <- with(joined, joined[chs_entrydate %within% gap_interval, ])
+
+#joined_filter
+
+```
+
+All in all, this leads to **`r nrow(joined_filter)`** gaps of over 365 days that contained an address change, out of **`r nrow(g_1yr)`** total gaps >= 365 days. These gaps can be attributed to **`r nrow(distinct(joined_filter, ssn_altkey))`** unique patients.
+
+
+
+
