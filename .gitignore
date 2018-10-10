@@ -128,3 +128,6 @@ vignettes/*.pdf
 
 # System files
 *.DS_Store
+
+#Jupyter Notebooks (Temporary Until their code is moved to source)
+*.ipynb
