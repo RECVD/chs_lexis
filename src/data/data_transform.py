@@ -5,6 +5,10 @@ import datetime as dt
 import pandas as pd
 from pathlib import Path
 
+#############################################
+# Functions which apply to all of wrangling #
+#############################################
+
 def convert_dates(date):
     """
 
@@ -80,6 +84,11 @@ def diff_month(date_series_1, date_series_2):
     return abs((date_series_2_year - date_series_1_year) * 12 + date_series_2_month - date_series_1_month)
 
 
+##########################################
+# Type-Specific Data-Wrangling Functions #
+##########################################
+
+
 def clean_add_history(lexis_address_filename):
     """
 
@@ -109,7 +118,7 @@ def clean_license_history(work_history_filename):
         ssn-altkey.
         :return: Pandas series denoting the lex_professional_any variable.  Index is still ssn-altkey.
         """
-        #drop several columns that always contain data (even if no license is present)
+        # drop several columns that always contain data (even if no license is present)
         license_present = work_history.drop(['gender', 'yrdeath', 'city', 'state'], axis=1) \
             .notnull() \
             .any(axis=1) \
@@ -136,8 +145,7 @@ def clean_license_history(work_history_filename):
         # existing in the case of multiple licenses
         license_c = license_present.copy(deep=True)
 
-        license_c[license_c == 1] = work_history.drop(['gender', 'yrdeath', 'city', 'state'],
-                                                                       axis=1) \
+        license_c[license_c == 1] = work_history.drop(['gender', 'yrdeath', 'city', 'state'], axis=1) \
             .notnull() \
             .any(axis=1) \
             .groupby(level=0) \
@@ -179,7 +187,27 @@ def clean_property_history(property_history_filename):
     :param property_history_filename:
     :return:
     """
-    pass
+
+    # drop non-time series variables
+    prop = pd.read_csv(property_history_filename) \
+        .drop(columns=['gender', 'yrdeath', 'city', 'state', 'record_type'])
+
+    stubnames = ['Prop-city_', 'Prop-state_', 'Assessed-value_', 'Total-value_', 'Sale-date_', 'Sale-price_',
+                 'Mortgage-amount_', 'Total-market-value_']
+
+    # size of each non-empty ssn-altkey group
+    prop_c_nonzero = pd.wide_to_long(prop, stubnames=stubnames, i="ssn_altkey", j="time_series") \
+        .sort_index() \
+        .dropna(how='all') \
+        .groupby(level=0) \
+        .size()
+
+    # Join in to complete index including all ssn-altkey values
+    prop_c = prop_c_nonzero.combine_first(pd.Series(0, index=prop["ssn_altkey"])) \
+        .astype("int64") \
+        .rename('lex_propertyown_c')
+
+    return prop_c
 
 
 if __name__ == "__main__":
@@ -188,10 +216,10 @@ if __name__ == "__main__":
     proj_root = Path(cwd).parent.parent
     data_path = proj_root / 'data' / 'raw'
 
-    #
     license_history_filename = data_path / 'LN_Output_ProfLicenses_LN_InputLexisNexisCHSParticipantsNS.Dataset.csv'
+    property_history_filename = data_path / 'LN_Output_Property_LN_InputLexisNexisCHSParticipantsNS.Dataset.csv'
 
-    print(clean_license_history(license_history_filename))
+    print(clean_property_history(property_history_filename))
 
 
 
