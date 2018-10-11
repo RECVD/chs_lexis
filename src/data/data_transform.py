@@ -178,8 +178,59 @@ def clean_vote_history(vote_history_filename):
     :param vote_history_filename:
     :return:
     """
-    pass
+    def tot_votes(vote_cleaned):
+        return vote_cleaned.apply(sum, axis=1).rename('lex_votetotal_c')
 
+    def prim_votes(vote_cleaned):
+        prim = vote_cleaned[[x for x in vote_cleaned.columns.tolist() if 'primary' in x]]
+        return prim.apply(sum, axis=1).rename('lex_voteprim_c')
+
+    def gen_votes(vote_cleaned):
+        gen = vote_cleaned[[x for x in vote_cleaned.columns.tolist() if 'general' in x]]
+        return gen.apply(sum, axis=1).rename('lex_votegen_c')
+
+    def pres_votes(vote_cleaned):
+        pres = vote_cleaned[[x for x in vote_cleaned.columns.tolist() if 'pres' in x]]
+        return pres.apply(sum, axis=1).rename('lex_votepres_c')
+
+    def death_votes(vote_uncleaned):
+        # 'voted_year_1' is the most recent vote
+        datecols = ['yrdeath', 'voted_year_1']
+        death = vote_uncleaned.groupby(level=0).last()[datecols]
+        death.columns = ['yrdeath', 'most_recent_vote']
+        death['lex_deathvote'] = death['yrdeath'] > death['most_recent_vote']
+
+        # so the most_recent_vote is printed without the decimal points
+        pd.options.display.float_format = '{:.0f}'.format
+
+        return death
+
+    df_full = pd.read_csv(vote_history_filename, index_col=['ssn_altkey'])
+
+    # subset to of interest columns
+    vote_terms = ['special', 'primary', 'general', 'pres', 'other']
+    df = df_full[[x for x in df_full.columns if any(y in x for y in vote_terms)]] \
+        .dropna(axis=1, how="all")
+
+    # Replace NAN with 0 (no vote), all other data with 1 (vote)
+    df_num = df.groupby(level=0) \
+        .ffill() \
+        .drop(columns=['ssn_altkey']) \
+        .groupby(level=0) \
+        .last() \
+        .replace(np.nan, '0') \
+        .replace(['Y', 'R', 'D', 'A', 'E', 'P', 'M', 'Q', 'U'], "1")  \
+        .astype('int64')
+
+    df_final = pd.concat([tot_votes(df_num),
+                          prim_votes(df_num),
+                          gen_votes(df_num),
+                          pres_votes(df_num),
+                          death_votes(df_full)], axis=1)
+
+    return df_final
+    #total_votes = tot_votes(df_num)
+    #primary_votes = prim_votes(df_num)
 
 def clean_property_history(property_history_filename):
     """
@@ -212,12 +263,15 @@ def clean_property_history(property_history_filename):
 
 if __name__ == "__main__":
     # define paths for data reading based on project structure
+
     cwd = os.getcwd()
     proj_root = Path(cwd).parent.parent
     data_path = proj_root / 'data' / 'raw'
 
+    # create derived variables
     license_history_filename = data_path / 'LN_Output_ProfLicenses_LN_InputLexisNexisCHSParticipantsNS.Dataset.csv'
     property_history_filename = data_path / 'LN_Output_Property_LN_InputLexisNexisCHSParticipantsNS.Dataset.csv'
+    vote_history_filename = data_path / "LN_Output_Voter_LN_InputLexisNexisCHSParticipantsNS.Dataset.csv"
 
     print(clean_property_history(property_history_filename))
 
