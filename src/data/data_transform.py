@@ -98,28 +98,28 @@ def clean_add_history(lexis_address_filename):
     """
     pass
 
-def clean_license_history(work_history_filename):
+def clean_license_history(license_history_filename):
     """
-    Computes single patient-level derived variables for work history.  These include:
+    Computes single patient-level derived variables for license history.  These include:
         - lex_professional_c: Count of professional licenses ever held
         - lex_professional_any:  Binary indicator variable.  Denotes whether the subject has ever held any professional
             licenses.
 
-    :param work_history_filename: the filename string for the People at Work LexisNexis file
+    :param license_history_filename: the filename string for the People at Work LexisNexis file
     :return: Pandas.DataFrame().  Index is ssn-altkey, with two columns:  lex_professional_c and lex_professional_any.
     """
 
-    def get_lex_professional_any(work_history):
+    def get_lex_professional_any(license_history):
         """
         Returns a pandas series by the ssn-altkey index that contains 0 if the given subject had no professional
         licenses, or 1 if they had at least one professional license.
 
-        :param work_history: The LexisNexis work history file as a Pandas DataFrame object.  Index should be
+        :param license_history: The LexisNexis license history file as a Pandas DataFrame object.  Index should be
         ssn-altkey.
         :return: Pandas series denoting the lex_professional_any variable.  Index is still ssn-altkey.
         """
         # drop several columns that always contain data (even if no license is present)
-        license_present = work_history.drop(['gender', 'yrdeath', 'city', 'state'], axis=1) \
+        license_present = license_history.drop(['gender', 'yrdeath', 'city', 'state'], axis=1) \
             .notnull() \
             .any(axis=1) \
             .groupby(level=0) \
@@ -129,12 +129,12 @@ def clean_license_history(work_history_filename):
         return license_present.astype("int64")
 
 
-    def get_lex_professional_c(work_history, license_present):
+    def get_lex_professional_c(license_history, license_present):
         """
         Returns a pandas series by the ssn-altkey index that contains the number of professional licenses a given
         subject has ever held.
 
-        :param work_history: The LexisNexis work history file as a Pandas DataFrame object.  Index should be
+        :param license_history: The LexisNexis license history file as a Pandas DataFrame object.  Index should be
         ssn-altkey.
         :param license_present: Integer indicator variable of license being present, output of
         get_lex_professional_any().
@@ -145,92 +145,133 @@ def clean_license_history(work_history_filename):
         # existing in the case of multiple licenses
         license_c = license_present.copy(deep=True)
 
-        license_c[license_c == 1] = work_history.drop(['gender', 'yrdeath', 'city', 'state'], axis=1) \
+        license_c[license_c == 1] = license_history.drop(['gender', 'yrdeath', 'city', 'state'], axis=1) \
             .notnull() \
             .any(axis=1) \
             .groupby(level=0) \
-            .size() \
-            .rename('lex_professional_c')
+            .size()
 
-        return license_c
+        return license_c.rename('lex_professional_c')
 
-    work_history = pd.read_csv(work_history_filename, index_col='ssn_altkey') \
+    license_history = pd.read_csv(license_history_filename, index_col='ssn_altkey') \
         .drop_duplicates()
-    work_history = convert_all_dates(work_history)
+    license_history = convert_all_dates(license_history)
 
-    lex_professional_any = get_lex_professional_any(work_history)
-    lex_professional_c = get_lex_professional_c(work_history, lex_professional_any)
+    lex_professional_any = get_lex_professional_any(license_history)
+    lex_professional_c = get_lex_professional_c(license_history, lex_professional_any)
 
     return pd.concat([lex_professional_any, lex_professional_c], axis=1)
 
 
-def clean_work_history(license_history_filename):
+def clean_work_history(work_history_filename):
     """
 
-    :param license_history_filename:
-    :return:
     """
     pass
 
 def clean_vote_history(vote_history_filename):
-    """
+    """ Creates all the derived variables from the "Voter" LexixsNexis file.
 
-    :param vote_history_filename:
-    :return:
+    These include:
+        - lex_votetotal_c: total number of times each person voted
+        - lex_voteprim_c: total number of times each person voted in a primary election
+        - lex_votegen_c: total number of times each person voted in a general election
+        - lex_votepres_c: total number of times each person voted in a presidential election
+        - yrdeath: year the person died, included for context in death_vote variable
+        - lex_vote_most_recent: most recent time the person voted, included for context in death_vote variable
+        - lex_deathvote: indicator variable for whether is listed as voting after their CHS date of death
+
+    The function returns a pandas DataFrame with all these variables, and a unique ssn-altkey as the index.
+
+    Keywork Arguments:
+    vote_history_filename -- the filename string for the "Voter" LexisNexis file
     """
     def tot_votes(vote_cleaned):
+        """ Returns the total number of times each subject voted as a series with index ssn-altkey.
+        Acts on the cleaned dataset.
+        """
         return vote_cleaned.apply(sum, axis=1).rename('lex_votetotal_c')
 
     def prim_votes(vote_cleaned):
+        """
+        Returns the total number of times each subject voted in a primary election as a series with index ssn-altkey
+        Acts on the cleaned dataset.
+        """
         prim = vote_cleaned[[x for x in vote_cleaned.columns.tolist() if 'primary' in x]]
         return prim.apply(sum, axis=1).rename('lex_voteprim_c')
 
     def gen_votes(vote_cleaned):
+        """
+        Returns the total number of times each subject voted in a general election as a series with index ssn-altkey.
+        Acts on the cleaned dataset.
+        """
         gen = vote_cleaned[[x for x in vote_cleaned.columns.tolist() if 'general' in x]]
         return gen.apply(sum, axis=1).rename('lex_votegen_c')
 
     def pres_votes(vote_cleaned):
+        """
+        Returns the total number of times each subject voted in a presidential election as a series with
+        index ssn-altkey.
+        Acts on the cleaned dataset.
+        """
         pres = vote_cleaned[[x for x in vote_cleaned.columns.tolist() if 'pres' in x]]
         return pres.apply(sum, axis=1).rename('lex_votepres_c')
 
     def death_votes(vote_uncleaned):
+        """ Returns the following variables, acting on the uncleaned dataset:
+            - yrdeath
+            - lex_most_recent_vote
+            - deathvote
+        """
         # 'voted_year_1' is the most recent vote
         datecols = ['yrdeath', 'voted_year_1']
-        death = vote_uncleaned.groupby(level=0).last()[datecols]
-        death.columns = ['yrdeath', 'most_recent_vote']
-        death['lex_deathvote'] = death['yrdeath'] > death['most_recent_vote']
+        death = vote_uncleaned.groupby('ssn_altkey').last()[datecols]
+        death.columns = ['yrdeath', 'lex_most_recent_vote']
+        death['lex_deathvote'] = death['yrdeath'] > death['lex_most_recent_vote']
 
         # so the most_recent_vote is printed without the decimal points
         pd.options.display.float_format = '{:.0f}'.format
 
         return death
 
-    df_full = pd.read_csv(vote_history_filename, index_col=['ssn_altkey'])
+    def clean_vote_data(vote_uncleaned):
+        """ Prepares the vote data for summing totals votes on the elections of interest.
+        - Subsets to only elections of interest
+        - Collapse to only a single row for each ssn-altkey
+        - Fill all letters with a positive indicator for voting
 
-    # subset to of interest columns
-    vote_terms = ['special', 'primary', 'general', 'pres', 'other']
-    df = df_full[[x for x in df_full.columns if any(y in x for y in vote_terms)]] \
-        .dropna(axis=1, how="all")
+        Returns this data in the form of a Pandas DataFrame.
 
-    # Replace NAN with 0 (no vote), all other data with 1 (vote)
-    df_num = df.groupby(level=0) \
-        .ffill() \
-        .drop(columns=['ssn_altkey']) \
-        .groupby(level=0) \
-        .last() \
-        .replace(np.nan, '0') \
-        .replace(['Y', 'R', 'D', 'A', 'E', 'P', 'M', 'Q', 'U'], "1")  \
-        .astype('int64')
+        Keyword Arguments:
+        vote_uncleaned -- the original version of the LexisNexis Voter data with numeric index.
+        """
+        # subset to of interest columns
+        vote_terms = ['ssn_altkey', 'special', 'primary', 'general', 'pres', 'other']
+        vote_subset = vote_uncleaned[[x for x in vote_uncleaned.columns if any(y in x for y in vote_terms)]] \
+            .dropna(axis=1, how="all")
 
-    df_final = pd.concat([tot_votes(df_num),
-                          prim_votes(df_num),
-                          gen_votes(df_num),
-                          pres_votes(df_num),
-                          death_votes(df_full)], axis=1)
+        # Replace NAN with 0 (no vote), all other data with 1 (vote)
+        vote_num = vote_subset.groupby('ssn_altkey') \
+            .ffill() \
+            .groupby('ssn_altkey') \
+            .last() \
+            .replace(np.nan, '0') \
+            .replace(['Y', 'R', 'D', 'A', 'E', 'P', 'M', 'Q', 'U'], "1")  \
+            .astype('int64')
+
+        return vote_num
+
+    vote_uncleaned = pd.read_csv(vote_history_filename)
+    vote_clean = clean_vote_data(vote_uncleaned)
+
+    df_final = pd.concat([tot_votes(vote_clean),
+                          prim_votes(vote_clean),
+                          gen_votes(vote_clean),
+                          pres_votes(vote_clean),
+                          death_votes(vote_uncleaned)], axis=1)
 
     return df_final
-    #total_votes = tot_votes(df_num)
-    #primary_votes = prim_votes(df_num)
+
 
 def clean_property_history(property_history_filename):
     """
@@ -272,8 +313,6 @@ if __name__ == "__main__":
     license_history_filename = data_path / 'LN_Output_ProfLicenses_LN_InputLexisNexisCHSParticipantsNS.Dataset.csv'
     property_history_filename = data_path / 'LN_Output_Property_LN_InputLexisNexisCHSParticipantsNS.Dataset.csv'
     vote_history_filename = data_path / "LN_Output_Voter_LN_InputLexisNexisCHSParticipantsNS.Dataset.csv"
-
-    print(clean_property_history(property_history_filename))
 
 
 
