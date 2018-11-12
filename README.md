@@ -55,3 +55,26 @@ Project Organization
 --------
 
 <p><small>Project based on the <a target="_blank" href="https://drivendata.github.io/cookiecutter-data-science/">cookiecutter data science project template</a>. #cookiecutterdatascience</small></p>
+
+
+## Data Output Format
+- Participant level data: any data that does **not** represent a distance between two addresses ("." is an arbitrary numeric indicator)
+    - best_address_last_correct
+    - best_address_last_mod
+    - lex_numberofjobs_c
+    - lex_emp_range_\.\_first_seen
+    - lex_emp_range_\.\_last_seen
+    - lex_professional_any
+    - lex_professional_c
+    - lex_voteprim_c
+    - lex_votegen_c
+    - lex_votepres_c
+    - lex_votetotal_c
+    - lex_deathvote
+    - lex_propertyown_c
+
+    
+- Buffer level data: any data that **does** represent a record for each of a participants best_address's, the number of which is represented by "\*"
+    - lex_bestaddresslength\*
+    - lex_bestaddresssame\*rel_c
+    - lex_bestaddresssame\*rel_c
