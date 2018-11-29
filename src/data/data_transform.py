@@ -91,14 +91,135 @@ def diff_month(date_series_1, date_series_2):
 ##########################################
 
 
-def clean_add_history(lexis_address_filename):
+###############################################
+### Address History, Relatives & Associates ###
+###############################################
+
+# Participant Level
+
+def clean_address_history(add_hist_uncleaned):
+    """ Formatting for the work_history filename
+
+    Change column naming convention and subset to only needed columns.
+
+    Keyword Arguments:
+        work_history_uncleaned: the raw version of the LexisNexis "People at Work" file
+    Returns: cleaned and subsetted version
+    """
+    # subset to desired columns
+    my_cols = ['ssn_altkey', 'yrdeath'] + [col for col in add_hist_uncleaned.columns if '_seen' in col]
+    add_hist_uncleaned = add_hist_uncleaned[my_cols]
+
+    add_hist_long = pd.wide_to_long(add_hist_uncleaned,
+                                    ['best_address_last_seen_', 'best_address_first_seen_'], i='ssn_altkey',
+                                    j='best_address_num') \
+        .sort_index() \
+        .reset_index(drop=False) \
+        .drop_duplicates(subset=['ssn_altkey', 'best_address_last_seen_', 'best_address_first_seen_']) \
+        .set_index(["ssn_altkey", "best_address_num"])
+
+    add_hist_long.columns = ['prs_chs_death_2014', 'last_seen_date', 'first_seen_date']
+    add_hist_long['prs_chs_death_2014'] = pd.to_datetime(add_hist_long["prs_chs_death_2014"], format='%Y')
+
+    add_hist_long = convert_all_dates(add_hist_long)
+
+    return add_hist_long
+
+
+def wrangle_address_AH(add_hist_uncleaned):
+    """ Get all participant level derived variables based on "AH, Relatives and Associates" file
+
+    Keyword Arguments:
+        - add_hist_cleaned:
+        - ba_ba_comparison:
+
+    Returns:
+    """
+    add_hist_cleaned = clean_address_history(add_hist_uncleaned)
+
+    # lex_bestAddressLength*
+    add_hist_cleaned['adr_lex_bestAddressLength_2014'] = diff_month(add_hist_cleaned.first_seen_date,
+                                                           add_hist_cleaned.last_seen_date)
+    # best_address_last_correct
+    add_hist_participant = add_hist_cleaned.groupby(level=0).ffill().groupby(level=0).last() \
+        .drop(columns=['ssn_altkey'])
+    add_hist_participant['prs_lex_bestAddressLastCorrect_b_2014'] = (add_hist_participant['last_seen_date'] < \
+                                                        add_hist_participant['prs_chs_death_2014']).astype('int64')
+    add_hist_participant.loc[add_hist_participant["last_seen_date"].isnull(), 'prs_lex_bestAddressLastCorrect_b_2014'] = np.nan
+
+    # best_address_last_mod
+    add_hist_participant['prs_lex_bestAddressLastMod_2014'] = add_hist_participant['last_seen_date']
+    add_hist_participant.loc[add_hist_participant['prs_lex_bestAddressLastCorrect_b_2014'] == False,
+                             'prs_lex_bestAddressLastMod_2014'] = add_hist_participant['prs_chs_death_2014']
+
+    add_hist_participant.rename(columns={"last_seen_date": "prs_lex_bestAddressLast_2014"}, inplace=True)
+
+    return {"participant": add_hist_participant[['prs_lex_bestAddressLast_2014', 'prs_lex_bestAddressLastCorrect_b_2014',
+                                                 'prs_lex_bestAddressLastMod_2014']],
+            "buffer": add_hist_cleaned['adr_lex_bestAddressLength_2014']}
+
+
+def wrangle_address_dist_matrix(ba_rel, ba_asso):
+    """ Get all buffer level derived variables based on "AH, Relatives and Associates" file
+
+    Note: we have some participants that list relatives but no associates (or vice versa), so we have to fill NA values
+
+    Keyword Arguments:
+        - ba_ba_comparison:
+        - ba_rel_comparison:
+        - ba_asso_comparison:
+
+    Returns:
     """
 
-    :param lexis_address_filename: the filename string for the LexisNexis address history, relatives and associates file
-    :return: A dataframe with the following variables:
+    # lex_bestAddressSame_*_rel_c
+    ba_rel['zero'] = 0
+    g = ba_rel.groupby(['ssn_altkey', 'timeseries1'])
+    g2 = ba_rel[ba_rel['distance_spheroid_m'] == 0].groupby(['ssn_altkey', 'timeseries1'])
 
+    concordant_rel = g2.size().combine_first(g.first().zero)
+    concordant_rel.index.names = ['ssn_altkey', 'best_address_num']
+    concordant_rel.name = 'adr_lex_bestAddressSameRel_c'
+
+    # lex_bestAddressSame_*_asso_c
+    ba_asso['zero'] = 0
+    g = ba_asso.groupby(['ssn_altkey', 'timeseries1'])
+    g2 = ba_asso[ba_asso['distance_spheroid_m'] == 0].groupby(['ssn_altkey', 'timeseries1'])
+
+    concordant_asso = g2.size().combine_first(g.first().zero)
+    concordant_asso.index.names = ['ssn_altkey', 'best_address_num']
+    concordant_asso.name = 'adr_lex_bestAddressSameAsso_c_2014'
+
+    return pd.concat([concordant_rel, concordant_asso], axis=1).fillna(0)
+
+
+def wrangle_address_history_all(add_hist_file, ba_rel_file, ba_asso_file):
     """
-    pass
+
+    :param add_history_file:
+    :param ba_rel_file:
+    :param ba_asso_file:
+    :return:
+    """
+
+    ba_rel = pd.read_csv(ba_rel_file)
+    ba_asso = pd.read_csv(ba_asso_file)
+    add_hist_uncleaned = pd.read_csv(add_hist_file)
+
+    dist_matrix_vars = wrangle_address_dist_matrix(ba_rel, ba_asso)
+    mixed_vars = wrangle_address_AH(add_hist_uncleaned)
+
+    participant_level = mixed_vars['participant']
+    buffer_level = pd.concat([mixed_vars['buffer'], dist_matrix_vars], axis=1).dropna(how="all")
+    buffer_level[dist_matrix_vars.columns.tolist()] = buffer_level[dist_matrix_vars.columns.tolist()].fillna(0)
+
+    return {"participant": participant_level, "buffer": buffer_level}
+
+
+#####################################################
+######### Professional License Cleaning #############
+#####################################################
+
 
 def wrangle_license_history(license_history_filename):
     """
@@ -111,7 +232,7 @@ def wrangle_license_history(license_history_filename):
     :return: Pandas.DataFrame().  Index is ssn-altkey, with two columns:  lex_professional_c and lex_professional_any.
     """
 
-    def get_lex_professional_any(license_history):
+    def get_lex_professional_vars(license_history):
         """
         Returns a pandas series by the ssn-altkey index that contains 0 if the given subject had no professional
         licenses, or 1 if they had at least one professional license.
@@ -121,48 +242,27 @@ def wrangle_license_history(license_history_filename):
         :return: Pandas series denoting the lex_professional_any variable.  Index is still ssn-altkey.
         """
         # drop several columns that always contain data (even if no license is present)
-        license_present = license_history.drop(['gender', 'yrdeath', 'city', 'state'], axis=1) \
+        license_cleaned = license_history.drop(['gender', 'yrdeath', 'city', 'state'], axis=1) \
             .notnull() \
             .any(axis=1) \
+            .astype("int64") \
             .groupby(level=0) \
-            .any() \
-            .rename('lex_professional_any')
+            .sum() \
+            .rename('prs_lex_professional_c_2014') \
+            .to_frame()
 
-        return license_present.astype("int64")
+        license_cleaned['prs_lex_professionalAny_b_2014'] = (license_cleaned['prs_lex_professional_c_2014'] > 0) \
+            .astype("int64")
+
+        return license_cleaned
 
 
-    def get_lex_professional_c(license_history, license_present):
-        """
-        Returns a pandas series by the ssn-altkey index that contains the number of professional licenses a given
-        subject has ever held.
 
-        :param license_history: The LexisNexis license history file as a Pandas DataFrame object.  Index should be
-        ssn-altkey.
-        :param license_present: Integer indicator variable of license being present, output of
-        get_lex_professional_any().
-        :return: Pandas series denoting the lex_professional_c variable. Index is still ssn-altkey.
-        """
-        # Create a series for numlicenses with index 'ssn_altkey', one row per participant.
-        # Index will not match up with original data file, which had at least one record per participant, with more
-        # existing in the case of multiple licenses
-        license_c = license_present.copy(deep=True)
-
-        license_c[license_c == 1] = license_history.drop(['gender', 'yrdeath', 'city', 'state'], axis=1) \
-            .notnull() \
-            .any(axis=1) \
-            .groupby(level=0) \
-            .size()
-
-        return license_c.rename('lex_professional_c')
-
-    license_history = pd.read_csv(license_history_filename, index_col='ssn_altkey') \
-        .drop_duplicates()
+    license_history = pd.read_csv(license_history_filename) \
+        .drop_duplicates().set_index('ssn_altkey')
     license_history = convert_all_dates(license_history)
 
-    lex_professional_any = get_lex_professional_any(license_history)
-    lex_professional_c = get_lex_professional_c(license_history, lex_professional_any)
-
-    return pd.concat([lex_professional_any, lex_professional_c], axis=1)
+    return get_lex_professional_vars(license_history)
 
 
 #############################################
@@ -237,7 +337,7 @@ def create_emp_intervals(work_history_cleaned):
     """
     df_long = pd.wide_to_long(work_history_cleaned, ['pawk_last_seen_', 'pawk_first_seen_'], i='ssn_altkey', j='num')
     df_long = df_long.sort_index().dropna(subset=['pawk_last_seen_', 'pawk_first_seen_'])
-    df_long.columns = ['death', 'last_seen_date', 'first_seen_date']
+    df_long.columns = ['prs_chs_death_2014', 'last_seen_date', 'first_seen_date']
 
     # Cleaning - convert dates, drop duplicates within groups, and drop records where last_seen_date == first_seen_dat
     df_long = convert_all_dates(df_long) \
@@ -264,8 +364,9 @@ def get_num_jobs(emp_intervals_long):
     """ Get the number of jobs for each ssn_altkey with >= 1 job, before reduction"""
     return emp_intervals_long.groupby(level=0) \
         .size() \
-        .rename("lex_numberofjobs_c") \
+        .rename("prs_lex_numJobs_c_2014") \
         .to_frame()
+
 
 def reduce_emp_intervals(emp_intervals_long):
     """ Apply the reduction function to each person and return to the wide format"""
@@ -276,12 +377,13 @@ def reduce_emp_intervals(emp_intervals_long):
         .drop(columns=["num"])
 
     unstacked = df_long_reduced.unstack()
-    unstacked.columns = unstacked.columns.map('{0[1]}_emp_range_{0[1]}_{0[0]}'.format)
+    unstacked.columns = unstacked.columns.map(lambda x: '{0[1]}_empRange{0[1]}{0[0]}'.format(x)
+                                              .replace("first_seen", "FirstSeen")
+                                              .replace("last_seen", "LastSeen"))
     unstacked = unstacked.reindex(columns=sorted(unstacked.columns))
-    unstacked.columns = [x[2:-5] for x in unstacked.columns]
+    unstacked.columns = ["prs_lex_" + x[2:-4] + "2014" for x in unstacked.columns]
 
     return unstacked
-
 
 
 def wrangle_work_history(work_history_filename):
@@ -300,11 +402,12 @@ def wrangle_work_history(work_history_filename):
     emp_intervals_long = create_emp_intervals(work_history_cleaned)
 
     #create baseline with all ssn-altkeys
-    final_df = pd.DataFrame(0, index=work_history_uncleaned.ssn_altkey.unique(), columns=["lex_numberofjobs_c"])
+    final_df = pd.DataFrame(0, index=work_history_uncleaned.ssn_altkey.unique(), columns=["prs_lex_numJobs_c_2014"])
+    final_df.index.name = 'ssn_altkey'
     final_df = get_num_jobs(emp_intervals_long).combine_first(final_df).astype("int64")
     wide_intervals = reduce_emp_intervals(emp_intervals_long)
 
-    return pd.concat([wide_intervals, final_df], axis=1)
+    return wide_intervals.join(final_df, how="outer")
 
 
 def wrangle_vote_history(vote_history_filename):
@@ -328,7 +431,7 @@ def wrangle_vote_history(vote_history_filename):
         """ Returns the total number of times each subject voted as a series with index ssn-altkey.
         Acts on the cleaned dataset.
         """
-        return vote_cleaned.apply(sum, axis=1).rename('lex_votetotal_c')
+        return vote_cleaned.apply(sum, axis=1).rename('prs_lex_voteTotal_c_2014')
 
     def prim_votes(vote_cleaned):
         """
@@ -336,7 +439,7 @@ def wrangle_vote_history(vote_history_filename):
         Acts on the cleaned dataset.
         """
         prim = vote_cleaned[[x for x in vote_cleaned.columns.tolist() if 'primary' in x]]
-        return prim.apply(sum, axis=1).rename('lex_voteprim_c')
+        return prim.apply(sum, axis=1).rename('prs_lex_votePrim_c_2014')
 
     def gen_votes(vote_cleaned):
         """
@@ -344,7 +447,7 @@ def wrangle_vote_history(vote_history_filename):
         Acts on the cleaned dataset.
         """
         gen = vote_cleaned[[x for x in vote_cleaned.columns.tolist() if 'general' in x]]
-        return gen.apply(sum, axis=1).rename('lex_votegen_c')
+        return gen.apply(sum, axis=1).rename('prs_lex_voteGen_c_2014')
 
     def pres_votes(vote_cleaned):
         """
@@ -353,7 +456,7 @@ def wrangle_vote_history(vote_history_filename):
         Acts on the cleaned dataset.
         """
         pres = vote_cleaned[[x for x in vote_cleaned.columns.tolist() if 'pres' in x]]
-        return pres.apply(sum, axis=1).rename('lex_votepres_c')
+        return pres.apply(sum, axis=1).rename('prs_lex_votePres_c_2014')
 
     def death_votes(vote_uncleaned):
         """ Returns the following variables, acting on the uncleaned dataset:
@@ -364,8 +467,9 @@ def wrangle_vote_history(vote_history_filename):
         # 'voted_year_1' is the most recent vote
         datecols = ['yrdeath', 'voted_year_1']
         death = vote_uncleaned.groupby('ssn_altkey').last()[datecols]
-        death.columns = ['yrdeath', 'lex_most_recent_vote']
-        death['lex_deathvote'] = death['yrdeath'] > death['lex_most_recent_vote']
+        death.columns = ['prs_chs_death_2014', 'prs_lex_mostRecentVote_2014']
+        death['prs_lex_deathVote_b_2014'] = death['prs_chs_death_2014'] < death['prs_lex_mostRecentVote_2014']
+        death.loc[np.isnan(death['prs_lex_mostRecentVote_2014']), 'prs_lex_deathVote_b_2014'] = np.nan
 
         # so the most_recent_vote is printed without the decimal points
         pd.options.display.float_format = '{:.0f}'.format
@@ -438,7 +542,7 @@ def wrangle_property_history(property_history_filename):
     # Join in to complete index including all ssn-altkey values
     prop_c = prop_c_nonzero.combine_first(pd.Series(0, index=prop["ssn_altkey"])) \
         .astype("int64") \
-        .rename('lex_propertyown_c')
+        .rename('prs_lex_propertyOwn_c_2014')
 
     return prop_c
 
@@ -455,9 +559,20 @@ if __name__ == "__main__":
     property_history_filename = data_path / 'LN_Output_Property_LN_InputLexisNexisCHSParticipantsNS.Dataset.csv'
     vote_history_filename = data_path / "LN_Output_Voter_LN_InputLexisNexisCHSParticipantsNS.Dataset.csv"
     work_history_filename = data_path / 'LN_Output_Employment_LN_InputLexisNexisCHSParticipantsNS.Dataset.csv'
+    add_history_filename = data_path / 'LN_Output_Address_RelAsso_LN_InputLexisNexisCHSParticipants.DatasetNSv2.csv'
+    ba_rel_filename = proj_root / 'data' / 'interim' / 'distance_measures' / \
+                      'lexis_address_best_geocode__lexis_address_rel_geocode.csv'
+    ba_asso_filename = proj_root / 'data' / 'interim' / 'distance_measures' / \
+                       'lexis_address_best_geocode__lexis_address_asso_geocode.csv'
 
+    interim_path = proj_root / 'data' / 'interim'
 
-
-
+    wrangle_license_history(license_history_filename).to_csv(str(interim_path) + '//license_history.csv')
+    wrangle_property_history(property_history_filename).to_csv(str(interim_path) + '//property_history.csv', header=True)
+    wrangle_vote_history(vote_history_filename).to_csv(str(interim_path) + '//vote_history.csv')
+    wrangle_work_history(work_history_filename).to_csv(str(interim_path) + '//work_history.csv')
+    add_history = wrangle_address_history_all(add_history_filename, ba_rel_filename, ba_asso_filename)
+    add_history['participant'].to_csv(str(interim_path) + '//add_history_participant.csv')
+    add_history['buffer'].to_csv(str(interim_path) + '//add_history_buffer.csv')
 
 
