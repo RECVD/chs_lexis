@@ -10,13 +10,14 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(haven)
 library(lubridate)
+library(here)
 ```
 
 # Read and Tidy Address Data
 
 ```{r warning=FALSE, message=FALSE}
-add <- read_csv(str_c("C:\\Users\\jc4673\\Documents\\Columbia\\CHS_Lexis\\distance_measures\\",
-"chs_lexisnexis_distance_measures_2\\chs_addresses_geocode__chs_addresses_geocode.csv"), 
+
+add <- read_csv(here("data/interim/distance_measures/chs_addresses_geocode__chs_addresses_geocode.csv"), 
                 col_types = cols_only(ssn_altkey = "c",
                                      yrdeath = "i",
                                      dxid1 = "i",
@@ -58,7 +59,7 @@ tidy_entry <- bind_rows(id1, id2) %>%
 # Contact Date Data
 
 ```{r}
-contact_date <- read_dta("C:\\Users\\jc4673\\Documents\\Data\\CHS\\contactsbyalt_keywdates.dta") %>%
+contact_date <- read_dta(here("data/raw/contactsbyalt_keywdates.dta")) %>%
     group_by(ssn_altkey) %>%
     mutate(next_date = lead(contactdate),
           gap = next_date - contactdate) %>%
