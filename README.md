@@ -46,7 +46,7 @@ wrangling and visualization of CHS and LexisNexis data
 
 ### Buffer level data: 
 
-any data that **does** represent a record for each of a participants best_address's, 
+any data that **does** represent a record for each of a participants best_addresses
 
 - adr_lex_bestAddressNum_i_2014
 
